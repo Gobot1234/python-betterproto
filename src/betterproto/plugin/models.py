@@ -314,17 +314,17 @@ def is_map(
         map_entry = f"{proto_field_obj.name.replace('_', '').lower()}entry"
         if message_type == map_entry:
             for nested in parent_message.nested_type:  # parent message
-                if nested.name.replace("_", "").lower() == map_entry:
-                    if nested.options.map_entry:
-                        return True
+                if (
+                    nested.name.replace("_", "").lower() == map_entry
+                    and nested.options.map_entry
+                ):
+                    return True
     return False
 
 
 def is_oneof(proto_field_obj: FieldDescriptorProto) -> bool:
     """True if proto_field_obj is a OneOf, otherwise False."""
-    if proto_field_obj.HasField("oneof_index"):
-        return True
-    return False
+    return bool(proto_field_obj.HasField("oneof_index"))
 
 
 @dataclass
@@ -384,11 +384,10 @@ class FieldCompiler(MessageCompiler):
 
     @property
     def repeated(self) -> bool:
-        if self.proto_obj.label == FieldDescriptorProto.LABEL_REPEATED and not is_map(
-            self.proto_obj, self.parent
-        ):
-            return True
-        return False
+        return (
+            self.proto_obj.label == FieldDescriptorProto.LABEL_REPEATED
+            and not is_map(self.proto_obj, self.parent)
+        )
 
     @property
     def mutable(self) -> bool:
@@ -425,9 +424,7 @@ class FieldCompiler(MessageCompiler):
     @property
     def packed(self) -> bool:
         """True if the wire representation is a packed format."""
-        if self.repeated and self.proto_obj.type in PROTO_PACKED_TYPES:
-            return True
-        return False
+        return bool(self.repeated and self.proto_obj.type in PROTO_PACKED_TYPES)
 
     @property
     def py_name(self) -> str:
@@ -490,18 +487,20 @@ class MapEntryCompiler(FieldCompiler):
         """Explore nested types and set k_type and v_type if unset."""
         map_entry = f"{self.proto_obj.name.replace('_', '').lower()}entry"
         for nested in self.parent.proto_obj.nested_type:
-            if nested.name.replace("_", "").lower() == map_entry:
-                if nested.options.map_entry:
-                    # Get Python types
-                    self.py_k_type = FieldCompiler(
-                        parent=self, proto_obj=nested.field[0]  # key
-                    ).py_type
-                    self.py_v_type = FieldCompiler(
-                        parent=self, proto_obj=nested.field[1]  # value
-                    ).py_type
-                    # Get proto types
-                    self.proto_k_type = self.proto_obj.Type.Name(nested.field[0].type)
-                    self.proto_v_type = self.proto_obj.Type.Name(nested.field[1].type)
+            if (
+                nested.name.replace("_", "").lower() == map_entry
+                and nested.options.map_entry
+            ):
+                # Get Python types
+                self.py_k_type = FieldCompiler(
+                    parent=self, proto_obj=nested.field[0]  # key
+                ).py_type
+                self.py_v_type = FieldCompiler(
+                    parent=self, proto_obj=nested.field[1]  # value
+                ).py_type
+                # Get proto types
+                self.proto_k_type = self.proto_obj.Type.Name(nested.field[0].type)
+                self.proto_v_type = self.proto_obj.Type.Name(nested.field[1].type)
         super().__post_init__()  # call FieldCompiler-> MessageCompiler __post_init__
 
     @property
@@ -628,7 +627,7 @@ class ServiceMethodCompiler(ProtoContentBase):
             Name and actual default value (as a string)
             for each argument with mutable default values.
         """
-        mutable_default_args = dict()
+        mutable_default_args = {}
 
         if self.py_input_message:
             for f in self.py_input_message.fields:

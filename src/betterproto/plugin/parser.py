@@ -118,14 +118,12 @@ def generate_code(
         f.content: str = outputfile_compiler(output_file=output_package)
 
     # Make each output directory a package with __init__ file
-    init_files = (
-        set(
-            directory.joinpath("__init__.py")
-            for path in output_paths
-            for directory in path.parents
-        )
-        - output_paths
-    )
+    init_files = {
+        directory.joinpath("__init__.py")
+        for path in output_paths
+        for directory in path.parents
+    } - output_paths
+
 
     for init_file in init_files:
         init = response.file.add()

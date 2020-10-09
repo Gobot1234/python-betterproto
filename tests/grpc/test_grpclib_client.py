@@ -173,11 +173,11 @@ async def test_service_call_lower_level_with_overrides():
 
 @pytest.mark.asyncio
 async def test_async_gen_for_unary_stream_request():
-    thing_name = "my milkshakes"
-
     async with ChannelFor([ThingService()]) as channel:
         client = ThingServiceClient(channel)
         expected_versions = [5, 4, 3, 2, 1]
+        thing_name = "my milkshakes"
+
         async for response in client.get_thing_versions(name=thing_name):
             assert response.name == thing_name
             assert response.version == expected_versions.pop()
@@ -185,16 +185,16 @@ async def test_async_gen_for_unary_stream_request():
 
 @pytest.mark.asyncio
 async def test_async_gen_for_stream_stream_request():
-    some_things = ["cake", "cricket", "coral reef"]
-    more_things = ["ball", "that", "56kmodem", "liberal humanism", "cheesesticks"]
-    expected_things = (*some_things, *more_things)
-
     async with ChannelFor([ThingService()]) as channel:
         client = ThingServiceClient(channel)
         # Use an AsyncChannel to decouple sending and recieving, it'll send some_things
         # immediately and we'll use it to send more_things later, after recieving some
         # results
         request_chan = AsyncChannel()
+        some_things = ["cake", "cricket", "coral reef"]
+        more_things = ["ball", "that", "56kmodem", "liberal humanism", "cheesesticks"]
+        expected_things = (*some_things, *more_things)
+
         send_initial_requests = asyncio.ensure_future(
             request_chan.send_from(GetThingRequest(name) for name in some_things)
         )

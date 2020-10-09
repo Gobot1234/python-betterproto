@@ -26,7 +26,7 @@ from ._types import T
 from .casing import camel_case, safe_snake_case, snake_case
 from .grpc.grpclib_client import ServiceStub
 
-if not (sys.version_info.major == 3 and sys.version_info.minor >= 7):
+if sys.version_info.major != 3 or sys.version_info.minor < 7:
     # Apply backport of datetime.fromisoformat from 3.7
     from backports.datetime_fromisoformat import MonkeyPatch
 
@@ -301,10 +301,7 @@ def _preprocess_single(proto_type: str, wraps: str, value: Any) -> bytes:
         return encode_varint(value)
     elif proto_type in [TYPE_SINT32, TYPE_SINT64]:
         # Handle zig-zag encoding.
-        if value >= 0:
-            value = value << 1
-        else:
-            value = (value << 1) ^ (~0)
+        value = value << 1 if value >= 0 else (value << 1) ^ (~0)
         return encode_varint(value)
     elif proto_type in FIXED_TYPES:
         return struct.pack(_pack_fmt(proto_type), value)
@@ -463,12 +460,7 @@ class ProtoClassMetadata:
 
     @staticmethod
     def _get_default_gen(cls, fields):
-        default_gen = {}
-
-        for field in fields:
-            default_gen[field.name] = cls._get_field_default_gen(field)
-
-        return default_gen
+        return {field.name: cls._get_field_default_gen(field) for field in fields}
 
     @staticmethod
     def _get_cls_by_field(cls, fields):
@@ -702,16 +694,18 @@ class Message(ABC):
     @classmethod
     def _type_hints(cls) -> Dict[str, Type]:
         module = inspect.getmodule(cls)
-        type_hints = get_type_hints(cls, vars(module))
-        return type_hints
+        return get_type_hints(cls, vars(module))
 
     @classmethod
     def _cls_for(cls, field: dataclasses.Field, index: int = 0) -> Type:
         """Get the message class for a field from the type hints."""
         field_cls = cls._type_hint(field.name)
-        if hasattr(field_cls, "__args__") and index >= 0:
-            if field_cls.__args__ is not None:
-                field_cls = field_cls.__args__[index]
+        if (
+            hasattr(field_cls, "__args__")
+            and index >= 0
+            and field_cls.__args__ is not None
+        ):
+            field_cls = field_cls.__args__[index]
         return field_cls
 
     def _get_field_default(self, field_name):
@@ -964,8 +958,8 @@ class Message(ABC):
                     v = getattr(self, field_name)
                     if isinstance(v, list):
                         cls = self._betterproto.cls_by_field[field_name]
-                        for i in range(len(value[key])):
-                            v.append(cls().from_dict(value[key][i]))
+                        for item in value[key]:
+                            v.append(cls().from_dict(item))
                     elif isinstance(v, datetime):
                         v = datetime.fromisoformat(value[key].replace("Z", "+00:00"))
                         setattr(self, field_name, v)

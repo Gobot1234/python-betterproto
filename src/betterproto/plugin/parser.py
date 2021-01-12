@@ -1,5 +1,6 @@
 import itertools
 import pathlib
+import os
 import sys
 from typing import TYPE_CHECKING, Iterator, List, Tuple, Union, Set
 
@@ -41,14 +42,18 @@ from .models import (
 if TYPE_CHECKING:
     from google.protobuf.descriptor import Descriptor
 
+# ENV vars from __main__
+GENERATE_SERVICES = bool(int(os.getenv("GENERATE_SERVICES", 0)))
+VERBOSE = bool(int(os.getenv("VERBOSE", 0)))
+
 
 def traverse(
     proto_file: FieldDescriptorProto,
-) -> "itertools.chain[Tuple[Union[str, EnumDescriptorProto], List[int]]]":
+) -> "itertools.chain[Tuple[Union[DescriptorProto], List[int]]]":
     # Todo: Keep information about nested hierarchy
     def _traverse(
         path: List[int], items: List["Descriptor"], prefix=""
-    ) -> Iterator[Tuple[Union[str, EnumDescriptorProto], List[int]]]:
+    ) -> Iterator[Tuple[Union[DescriptorProto], List[int]]]:
         for i, item in enumerate(items):
             # Adjust the name since we flatten the hierarchy.
             # Todo: don't change the name, but include full name in returned tuple
@@ -103,10 +108,11 @@ def generate_code(
                 read_protobuf_type(item=item, path=path, output_package=output_package)
 
     # Read Services
-    for output_package_name, output_package in request_data.output_packages.items():
-        for proto_input_file in output_package.input_files:
-            for index, service in enumerate(proto_input_file.service):
-                read_protobuf_service(service, index, output_package)
+    if GENERATE_SERVICES:
+        for output_package_name, output_package in request_data.output_packages.items():
+            for proto_input_file in output_package.input_files:
+                for index, service in enumerate(proto_input_file.service):
+                    read_protobuf_service(service, index, output_package)
 
     # Generate output files
     output_paths: Set[pathlib.Path] = set()

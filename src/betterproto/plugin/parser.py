@@ -42,8 +42,9 @@ from .models import (
 if TYPE_CHECKING:
     from google.protobuf.descriptor import Descriptor
 
-# ENV vars from __main__
+# ENV vars from betterproto/__main__
 GENERATE_SERVICES = bool(int(os.getenv("GENERATE_SERVICES", 0)))
+SEPARATE_FILES = bool(int(os.getenv("SEPARATE_FILES", 0)))
 VERBOSE = bool(int(os.getenv("VERBOSE", 0)))
 
 
@@ -119,7 +120,10 @@ def generate_code(
     for output_package_name, output_package in request_data.output_packages.items():
 
         # Add files to the response object
-        output_path = pathlib.Path(*output_package_name.split("."), "__init__.py")
+        output_path = pathlib.Path(
+            *output_package_name.split("."),
+            "__init__.py" if not SEPARATE_FILES else f"{output_package.input_files[0][:-6]}.py",
+        )
         output_paths.add(output_path)
 
         f: response.File = response.file.add()

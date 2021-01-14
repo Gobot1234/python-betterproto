@@ -1,4 +1,5 @@
 import os.path
+import sys
 
 try:
     # betterproto[compiler] specific dependencies
@@ -31,7 +32,12 @@ def outputfile_compiler(output_file: OutputTemplate) -> str:
     )
     template = env.get_template("template.py.j2")
 
+    print(black.format_str(
+        template.render(output_file=output_file),
+        mode=black.Mode(target_versions={black.TargetVersion.PY37}),
+    ), file=sys.stderr
+    )
     return black.format_str(
         template.render(output_file=output_file),
-        mode=black.FileMode(target_versions={black.TargetVersion.PY37}),
+        mode=black.Mode(target_versions={black.TargetVersion.PY37}),
     )

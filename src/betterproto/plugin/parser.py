@@ -4,6 +4,10 @@ import os
 import sys
 from typing import TYPE_CHECKING, Iterator, List, Tuple, Union, Set
 
+import grpclib
+from grpclib.client import Channel
+from ..cli.services import Server
+import rich
 try:
     # betterproto[compiler] specific dependencies
     from google.protobuf.compiler import plugin_pb2 as plugin
@@ -14,13 +18,12 @@ try:
         ServiceDescriptorProto,
     )
 except ImportError as err:
-    print(
-        "\033[31m"
+    rich.print(
+        "[red]"
         f"Unable to import `{err.name}` from betterproto plugin! "
         "Please ensure that you've installed betterproto as "
         '`pip install "betterproto[compiler]"` so that compiler dependencies '
         "are included."
-        "\033[0m"
     )
     raise SystemExit(1)
 
@@ -75,9 +78,10 @@ def traverse(
     )
 
 
-def generate_code(
+async def generate_code(
     request: plugin.CodeGeneratorRequest, response: plugin.CodeGeneratorResponse
 ) -> None:
+    server = Server()
     plugin_options = request.parameter.split(",") if request.parameter else []
 
     request_data = PluginRequestCompiler(plugin_request_obj=request)

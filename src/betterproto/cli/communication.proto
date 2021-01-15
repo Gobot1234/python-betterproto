@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package communicator;
+
+message CurrentlyCompiling {
+  // The name of the message/enum/service that is currently being compiled.
+  string name = 1;
+  // The type of compiled object.
+  enum type {
+    ENUM = 0;
+    MESSAGE = 1;
+    SERVICE = 2;
+  }
+}
+
+message Connect {
+}
+
+
+service Compiled {
+  rpc Connect(Connect) returns (stream CurrentlyCompiling);  // Honestly not too sure how to just have an endpoint which takes no params
+}

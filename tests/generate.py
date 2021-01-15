@@ -3,17 +3,18 @@ import asyncio
 import os
 from pathlib import Path
 import platform
-import shutil
 import sys
 from typing import Set
+
+import click
 
 from tests.util import (
     get_directories,
     inputs_path,
     output_path_betterproto,
     output_path_reference,
-    protoc,
 )
+from betterproto.cli import compile_files
 
 # Force pure-python implementation instead of C++, otherwise imports
 # break things because we can't properly reset the symbol database.
@@ -22,10 +23,7 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 def clear_directory(dir_path: Path):
     for file_or_directory in dir_path.glob("*"):
-        if file_or_directory.is_dir():
-            shutil.rmtree(file_or_directory)
-        else:
-            file_or_directory.unlink()
+        file_or_directory.rmdir() if file_or_directory.is_dir() else file_or_directory.unlink()
 
 
 async def generate(whitelist: Set[str], verbose: bool):
@@ -88,8 +86,8 @@ async def generate_test_case_output(
         (ref_out, ref_err, ref_code),
         (plg_out, plg_err, plg_code),
     ) = await asyncio.gather(
-        protoc(test_case_input_path, test_case_output_path_reference, True),
-        protoc(test_case_input_path, test_case_output_path_betterproto, False),
+        compile_files(test_case_input_path, test_case_output_path_reference, ""),
+        compile_files(test_case_input_path, test_case_output_path_betterproto),
     )
 
     message = f"Generated output for {test_case_name!r}"
@@ -111,36 +109,22 @@ async def generate_test_case_output(
     return max(ref_code, plg_code)
 
 
-HELP = "\n".join(
-    (
-        "Usage: python generate.py [-h] [-v] [DIRECTORIES or NAMES]",
-        "Generate python classes for standard tests.",
-        "",
-        "DIRECTORIES    One or more relative or absolute directories of test-cases to generate classes for.",
-        "               python generate.py inputs/bool inputs/double inputs/enum",
-        "",
-        "NAMES          One or more test-case names to generate classes for.",
-        "               python generate.py bool double enums",
-    )
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
 )
-
-
-def main():
-    if set(sys.argv).intersection({"-h", "--help"}):
-        print(HELP)
-        return
-    if sys.argv[1:2] == ["-v"]:
-        verbose = True
-        whitelist = set(sys.argv[2:])
-    else:
-        verbose = False
-        whitelist = set(sys.argv[1:])
-
+@click.option("src", nargs=-1)
+def main(verbose: bool, src: str):
+    print(src)
     if platform.system() == "Windows":
         asyncio.set_event_loop(asyncio.ProactorEventLoop())
 
-    asyncio.get_event_loop().run_until_complete(generate(whitelist, verbose))
+    asyncio.get_event_loop().run_until_complete(generate(src, verbose))
 
 
 if __name__ == "__main__":
+    sys.argv = "-v lol .lolo text".split()
     main()

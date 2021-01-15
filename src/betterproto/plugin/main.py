@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import asyncio
 import os
 import sys
 
@@ -25,7 +26,7 @@ def main() -> None:
     response = plugin.CodeGeneratorResponse()
 
     # Generate code
-    generate_code(request, response)
+    asyncio.run(generate_code(request, response))
 
     # Serialise response message
     output = response.SerializeToString()

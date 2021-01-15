@@ -516,6 +516,10 @@ class Message(ABC):
         .. describe:: bytes(x)
 
             Calls :meth:`__bytes__`.
+
+        .. describe:: bool(x)
+
+            Calls :meth:`__bool__`.
     """
 
     _serialized_on_wire: bool
@@ -605,6 +609,14 @@ class Message(ABC):
                         super().__setattr__(field.name, PLACEHOLDER)
 
         super().__setattr__(attr, value)
+
+    def __bool__(self) -> bool:
+        """True if the Message has any fields with non-default values."""
+        return any(
+            self.__raw_get(field_name)
+            not in (PLACEHOLDER, self._get_field_default(field_name))
+            for field_name in self._betterproto.meta_by_field_name
+        )
 
     @property
     def _betterproto(self) -> ProtoClassMetadata:
@@ -920,9 +932,9 @@ class Message(ABC):
         """
         output: Dict[str, Any] = {}
         field_types = self._type_hints()
+        defaults = self._betterproto.default_gen
         for field_name, meta in self._betterproto.meta_by_field_name.items():
-            field_type = field_types[field_name]
-            field_is_repeated = type(field_type) is type(typing.List)
+            field_is_repeated = defaults[field_name] is list
             value = getattr(self, field_name)
             cased_name = casing(field_name).rstrip("_")  # type: ignore
             if meta.proto_type == TYPE_MESSAGE:
@@ -988,7 +1000,7 @@ class Message(ABC):
                         output[cased_name] = b64encode(value).decode("utf8")
                 elif meta.proto_type == TYPE_ENUM:
                     if field_is_repeated:
-                        enum_class: Type[Enum] = field_type.__args__[0]
+                        enum_class: Type[Enum] = field_types[field_name].__args__[0]
                         if isinstance(value, typing.Iterable) and not isinstance(
                             value, str
                         ):
@@ -997,7 +1009,7 @@ class Message(ABC):
                             # transparently upgrade single value to repeated
                             output[cased_name] = [enum_class(value).name]
                     else:
-                        enum_class: Type[Enum] = field_type  # noqa
+                        enum_class: Type[Enum] = field_types[field_name]  # noqa
                         output[cased_name] = enum_class(value).name
                 else:
                     output[cased_name] = value

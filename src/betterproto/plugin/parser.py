@@ -2,11 +2,9 @@ import itertools
 import pathlib
 import os
 import sys
-from typing import TYPE_CHECKING, Iterator, List, Tuple, Union, Set
+from typing import TYPE_CHECKING, Iterator, List, Tuple, Union, Set, Optional
 
-import grpclib
-from grpclib.client import Channel
-from ..cli.services import Server
+
 import rich
 try:
     # betterproto[compiler] specific dependencies
@@ -81,8 +79,13 @@ def traverse(
 async def generate_code(
     request: plugin.CodeGeneratorRequest, response: plugin.CodeGeneratorResponse
 ) -> None:
-    server = Server()
     plugin_options = request.parameter.split(",") if request.parameter else []
+
+    total = 0
+    for file in request.proto_file:
+        total += len(file.message_type)
+        total += len(file.enum_type)
+        total += len(file.service)
 
     request_data = PluginRequestCompiler(plugin_request_obj=request)
     # Gather output packages
@@ -110,14 +113,18 @@ async def generate_code(
     for output_package_name, output_package in request_data.output_packages.items():
         for proto_input_file in output_package.input_files:
             for item, path in traverse(proto_input_file):
-                read_protobuf_type(item=item, path=path, output_package=output_package)
+                message = read_protobuf_type(item=item, path=path, output_package=output_package)
+                if message is None:
+                    continue
+                server.queue.put_nowait((message.py_name, 1 if isinstance(message, MessageCompiler) else 0))
 
     # Read Services
     if GENERATE_SERVICES:
         for output_package_name, output_package in request_data.output_packages.items():
             for proto_input_file in output_package.input_files:
                 for index, service in enumerate(proto_input_file.service):
-                    read_protobuf_service(service, index, output_package)
+                    service = read_protobuf_service(service, index, output_package)
+                    server.queue.put_nowait((service.py_name, 2))
 
     # Generate output files
     output_paths: Set[pathlib.Path] = set()
@@ -153,7 +160,7 @@ async def generate_code(
 
 def read_protobuf_type(
     item: DescriptorProto, path: List[int], output_package: OutputTemplate
-) -> None:
+) -> Optional[MessageCompiler]:
     if isinstance(item, DescriptorProto):
         if item.options.map_entry:
             # Skip generated map entry messages since we just use dicts
@@ -173,14 +180,15 @@ def read_protobuf_type(
                 FieldCompiler(
                     parent=message_data, proto_obj=field, path=path + [2, index]
                 )
+        return message_data
     elif isinstance(item, EnumDescriptorProto):
         # Enum
-        EnumDefinitionCompiler(parent=output_package, proto_obj=item, path=path)
+        return EnumDefinitionCompiler(parent=output_package, proto_obj=item, path=path)
 
 
 def read_protobuf_service(
     service: ServiceDescriptorProto, index: int, output_package: OutputTemplate
-) -> None:
+) -> ServiceCompiler:
     service_data = ServiceCompiler(
         parent=output_package, proto_obj=service, path=[6, index]
     )
@@ -188,3 +196,4 @@ def read_protobuf_service(
         ServiceMethodCompiler(
             parent=service_data, proto_obj=method, path=[6, index, 2, j]
         )
+    return service_data

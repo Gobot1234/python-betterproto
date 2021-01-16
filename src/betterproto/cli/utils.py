@@ -1,9 +1,12 @@
 import asyncio
+import functools
 import sys
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable, Awaitable, TypeVar
 
-from src.betterproto.cli import connected_to_subprocess, ENV
+from . import SUBPROCESS_CONNECTED, ENV
+
+T = TypeVar("T")
 
 try:
     import black
@@ -35,16 +38,16 @@ def recursive_file_finder(directory: Path) -> Tuple[Path, ...]:
 async def compile_files(
     *files: Path, output_dir: Path, implementation: str = "betterproto_"
 ) -> Tuple[str, str, Optional[int]]:
-    cwd = files[0].parent.resolve().as_posix()
+    cwd = files[0].parent.parent.resolve()
     files = [file.relative_to(cwd).as_posix() for file in files]
     command = [
         f"--python_{implementation}out={output_dir.as_posix()}",
         "-I",
-        cwd,
+        ".",
         *files,
     ]
     if ENV["USE_PROTOC"]:
-        command.insert(0, "/Users/gobot1234/Downloads/protoc")
+        command.insert(0, "protoc")
     else:
         command.insert(0, "grpc.tools.protoc")
         command.insert(0, "-m")
@@ -53,7 +56,19 @@ async def compile_files(
     proc = await asyncio.create_subprocess_shell(
         " ".join(command), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=ENV, cwd=cwd
     )
-    connected_to_subprocess.set()
+    SUBPROCESS_CONNECTED.set()
     stdout, stderr = await proc.communicate()
     return stdout.decode(), stderr.decode(), proc.returncode
 
+
+def run_sync(func: Callable[..., Awaitable[T]]) -> Callable[..., T]:
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        coro = func(*args, **kwargs)
+        loop = asyncio.get_event_loop()
+        try:
+            loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    return wrapper

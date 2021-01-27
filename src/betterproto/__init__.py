@@ -6,6 +6,7 @@ import struct
 import sys
 import typing
 from abc import ABC
+from array import array
 from base64 import b64decode, b64encode
 from datetime import datetime, timedelta, timezone
 from typing import (
@@ -21,6 +22,8 @@ from typing import (
     Union,
     get_type_hints,
 )
+
+import numba
 
 from ._types import T
 from .casing import camel_case, safe_snake_case, snake_case
@@ -288,7 +291,7 @@ def _pack_fmt(proto_type: str) -> str:
 
 def encode_varint(value: int) -> bytes:
     """Encodes a single varint value for serialization."""
-    b: List[int] = []
+    b: "array[int]" = array("H")
 
     if value < 0:
         value += 1 << 64
@@ -299,7 +302,8 @@ def encode_varint(value: int) -> bytes:
         b.append(0x80 | bits)
         bits = value & 0x7F
         value >>= 7
-    return bytes(b + [bits])
+    b.extend([bits])
+    return bytes(b)
 
 
 def _preprocess_single(proto_type: str, wraps: str, value: Any) -> bytes:
@@ -373,6 +377,7 @@ def _serialize_single(
     return bytes(output)
 
 
+@numba.njit
 def decode_varint(buffer: bytes, pos: int) -> Tuple[int, int]:
     """
     Decode a single varint value from a byte buffer. Returns the value and the
@@ -380,10 +385,8 @@ def decode_varint(buffer: bytes, pos: int) -> Tuple[int, int]:
     """
     result = 0
     shift = 0
-    while 1:
-        b = buffer[pos]
+    for pos, b in enumerate(buffer, start=pos):
         result |= (b & 0x7F) << shift
-        pos += 1
         if not (b & 0x80):
             return result, pos
         shift += 7

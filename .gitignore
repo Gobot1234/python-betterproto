@@ -17,3 +17,6 @@ output
 .venv
 .asv
 venv
+
+# mypyc
+**/*.so

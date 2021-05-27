@@ -1,19 +1,19 @@
-from betterproto.lib.google.protobuf import (
+import itertools
+import pathlib
+import sys
+from typing import Iterator, List, Sequence, Set, Tuple, Union
+
+from ..lib.google.protobuf import (
     DescriptorProto,
     EnumDescriptorProto,
-    FieldDescriptorProto,
     FileDescriptorProto,
     ServiceDescriptorProto,
 )
-from betterproto.lib.google.protobuf.compiler import (
+from ..lib.google.protobuf.compiler import (
     CodeGeneratorRequest,
     CodeGeneratorResponse,
     CodeGeneratorResponseFile,
 )
-import itertools
-import pathlib
-import sys
-from typing import Iterator, List, Set, Tuple, TYPE_CHECKING, Union
 from .compiler import outputfile_compiler
 from .models import (
     EnumDefinitionCompiler,
@@ -29,17 +29,16 @@ from .models import (
     is_oneof,
 )
 
-if TYPE_CHECKING:
-    from google.protobuf.descriptor import Descriptor
-
 
 def traverse(
-    proto_file: FieldDescriptorProto,
-) -> "itertools.chain[Tuple[Union[str, EnumDescriptorProto], List[int]]]":
+    proto_file: FileDescriptorProto,
+) -> "itertools.chain[Tuple[Union[DescriptorProto, EnumDescriptorProto], List[int]]]":
     # Todo: Keep information about nested hierarchy
     def _traverse(
-        path: List[int], items: List["EnumDescriptorProto"], prefix=""
-    ) -> Iterator[Tuple[Union[str, EnumDescriptorProto], List[int]]]:
+        path: List[int],
+        items: Sequence[Union[DescriptorProto, EnumDescriptorProto]],
+        prefix: str = "",
+    ) -> Iterator[Tuple[Union[DescriptorProto, EnumDescriptorProto], List[int]]]:
         for i, item in enumerate(items):
             # Adjust the name since we flatten the hierarchy.
             # Todo: don't change the name, but include full name in returned tuple
@@ -122,20 +121,18 @@ def generate_code(
 
     # Make each output directory a package with __init__ file
     init_files = {
-        directory.joinpath("__init__.py")
-        for path in output_paths
-        for directory in path.parents
+        directory / "__init__.py" for path in output_paths for directory in path.parents
     } - output_paths
 
     for init_file in init_files:
         response.file.append(CodeGeneratorResponseFile(name=str(init_file)))
 
-    for output_package_name in sorted(output_paths.union(init_files)):
-        print(f"Writing {output_package_name}", file=sys.stderr)
+    for file in sorted(output_paths | init_files):
+        print(f"Writing {file}", file=sys.stderr)
 
 
 def read_protobuf_type(
-    item: DescriptorProto,
+    item: Union[DescriptorProto, EnumDescriptorProto],
     path: List[int],
     source_file: "FileDescriptorProto",
     output_package: OutputTemplate,
@@ -145,7 +142,9 @@ def read_protobuf_type(
             # Skip generated map entry messages since we just use dicts
             return
         # Process Message
-        message_data = MessageCompiler(
+        message_data: MessageCompiler[
+            OutputTemplate, DescriptorProto
+        ] = MessageCompiler(
             source_file=source_file, parent=output_package, proto_obj=item, path=path
         )
         for index, field in enumerate(item.field):
@@ -185,5 +184,7 @@ def read_protobuf_service(
     )
     for j, method in enumerate(service.method):
         ServiceMethodCompiler(
-            parent=service_data, proto_obj=method, path=[6, index, 2, j]
+            parent=service_data,
+            proto_obj=method,
+            path=[6, index, 2, j],
         )

@@ -29,37 +29,24 @@ instantiating field `A` with parent message `B` should add a
 reference to `A` to `B`'s `fields` attribute.
 """
 
-
-import betterproto
-from betterproto import which_one_of
-from betterproto.casing import sanitize_name
-from betterproto.compile.importing import (
-    get_type_reference,
-    parse_source_type_name,
-)
-from betterproto.compile.naming import (
-    pythonize_class_name,
-    pythonize_field_name,
-    pythonize_method_name,
-)
-from betterproto.lib.google.protobuf import (
-    DescriptorProto,
-    EnumDescriptorProto,
-    FileDescriptorProto,
-    MethodDescriptorProto,
-    Field,
-    FieldDescriptorProto,
-    FieldDescriptorProtoType,
-    FieldDescriptorProtoLabel,
-)
-from betterproto.lib.google.protobuf.compiler import CodeGeneratorRequest
-
-
 import re
 import textwrap
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Text, Type, Union
-import sys
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Generic,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    TypeVar,
+    cast,
+)
+
+import betterproto
+from betterproto import which_one_of
 
 from ..casing import sanitize_name
 from ..compile.importing import get_type_reference, parse_source_type_name
@@ -68,11 +55,30 @@ from ..compile.naming import (
     pythonize_field_name,
     pythonize_method_name,
 )
-
+from ..lib.google.protobuf import (
+    DescriptorProto,
+    EnumDescriptorProto,
+    Field,
+    FieldDescriptorProto,
+    FieldDescriptorProtoLabel,
+    FieldDescriptorProtoType,
+    FileDescriptorProto,
+    MethodDescriptorProto,
+    ServiceDescriptorProto,
+)
+from ..lib.google.protobuf.compiler import CodeGeneratorRequest
 
 # Create a unique placeholder to deal with
 # https://stackoverflow.com/questions/51575931/class-inheritance-in-python-3-7-dataclasses
-PLACEHOLDER = object()
+PLACEHOLDER: Any = object()
+Parent = TypeVar(
+    "Parent", "DescriptorProto", "MessageCompiler", "OutputTemplate", "ServiceCompiler"
+)
+MParent = TypeVar("MParent", "DescriptorProto", "MessageCompiler", "OutputTemplate")
+ProtoObj = TypeVar(
+    "ProtoObj", "DescriptorProto", "EnumDescriptorProto", "FieldDescriptorProto"
+)
+
 
 # Organize proto types into categories
 PROTO_FLOAT_TYPES = (
@@ -116,7 +122,7 @@ PROTO_PACKED_TYPES = (
 )
 
 
-def monkey_patch_oneof_index():
+def monkey_patch_oneof_index() -> None:
     """
     The compiler message types are written for proto2, but we read them as proto3.
     For this to work in the case of the oneof_index fields, which depend on being able
@@ -124,14 +130,14 @@ def monkey_patch_oneof_index():
     monkey patches the generated classes after the fact to force this behaviour.
     """
     object.__setattr__(
-        FieldDescriptorProto.__dataclass_fields__["oneof_index"].metadata[
+        FieldDescriptorProto.__dataclass_fields__["oneof_index"].metadata[  # type: ignore
             "betterproto"
         ],
         "group",
         "oneof_index",
     )
     object.__setattr__(
-        Field.__dataclass_fields__["oneof_index"].metadata["betterproto"],
+        Field.__dataclass_fields__["oneof_index"].metadata["betterproto"],  # type: ignore
         "group",
         "oneof_index",
     )
@@ -162,15 +168,17 @@ def get_comment(
     return ""
 
 
-class ProtoContentBase:
+@dataclass
+class ProtoContentBase(Generic[Parent]):
     """Methods common to MessageCompiler, ServiceCompiler and ServiceMethodCompiler."""
 
-    source_file: FileDescriptorProto
-    path: List[int]
-    comment_indent: int = 4
-    parent: Union["betterproto.Message", "OutputTemplate"]
+    if TYPE_CHECKING:
+        __dataclass_fields__: Dict[str, object]
 
-    __dataclass_fields__: Dict[str, object]
+    comment_indent = 4
+    parent: Parent = PLACEHOLDER
+    source_file: FileDescriptorProto = PLACEHOLDER
+    path: List[int] = PLACEHOLDER
 
     def __post_init__(self) -> None:
         """Checks that no fake default fields were left as placeholders."""
@@ -182,15 +190,12 @@ class ProtoContentBase:
     def output_file(self) -> "OutputTemplate":
         current = self
         while not isinstance(current, OutputTemplate):
-            current = current.parent
+            current = cast(Any, current.parent)
         return current
 
     @property
     def request(self) -> "PluginRequestCompiler":
-        current = self
-        while not isinstance(current, OutputTemplate):
-            current = current.parent
-        return current.parent_request
+        return self.output_file.parent_request
 
     @property
     def comment(self) -> str:
@@ -233,7 +238,7 @@ class OutputTemplate:
 
     parent_request: PluginRequestCompiler
     package_proto_obj: FileDescriptorProto
-    input_files: List[str] = field(default_factory=list)
+    input_files: List[FileDescriptorProto] = field(default_factory=list)
     imports: Set[str] = field(default_factory=set)
     datetime_imports: Set[str] = field(default_factory=set)
     typing_imports: Set[str] = field(default_factory=set)
@@ -253,12 +258,12 @@ class OutputTemplate:
         return self.package_proto_obj.package
 
     @property
-    def input_filenames(self) -> Iterable[str]:
+    def input_filenames(self) -> List[str]:
         """Names of the input files used to build this output.
 
         Returns
         -------
-        Iterable[str]
+        List[str]
             Names of the input files used to build this output.
         """
         return sorted(f.name for f in self.input_files)
@@ -272,16 +277,13 @@ class OutputTemplate:
 
 
 @dataclass
-class MessageCompiler(ProtoContentBase):
+class MessageCompiler(ProtoContentBase[MParent], Generic[MParent, ProtoObj]):
     """Representation of a protobuf message."""
 
-    source_file: FileDescriptorProto
-    parent: Union["MessageCompiler", OutputTemplate] = PLACEHOLDER
-    proto_obj: DescriptorProto = PLACEHOLDER
+    parent: MParent = PLACEHOLDER
+    proto_obj: ProtoObj = PLACEHOLDER
     path: List[int] = PLACEHOLDER
-    fields: List[Union["FieldCompiler", "MessageCompiler"]] = field(
-        default_factory=list
-    )
+    fields: List["FieldCompiler"] = field(default_factory=list)
     deprecated: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
@@ -301,6 +303,10 @@ class MessageCompiler(ProtoContentBase):
     @property
     def py_name(self) -> str:
         return pythonize_class_name(self.proto_name)
+
+    @property
+    def repeated(self) -> bool:
+        raise NotImplementedError
 
     @property
     def annotation(self) -> str:
@@ -355,16 +361,15 @@ def is_oneof(proto_field_obj: FieldDescriptorProto) -> bool:
 
 
 @dataclass
-class FieldCompiler(MessageCompiler):
+class FieldCompiler(MessageCompiler[MessageCompiler, FieldDescriptorProto]):
     parent: MessageCompiler = PLACEHOLDER
-    proto_obj: FieldDescriptorProto = PLACEHOLDER
 
     def __post_init__(self) -> None:
         # Add field to message
         self.parent.fields.append(self)
         # Check for new imports
         self.add_imports_to(self.output_file)
-        super().__post_init__()  # call FieldCompiler-> MessageCompiler __post_init__
+        super().__post_init__()  # call FieldCompiler -> MessageCompiler __post_init__
 
     def get_field_string(self, indent: int = 4) -> str:
         """Construct string representation of this field as a field."""
@@ -419,13 +424,14 @@ class FieldCompiler(MessageCompiler):
             r"\.google\.protobuf\.(.+)Value$", self.proto_obj.type_name
         )
         if match_wrapper:
-            wrapped_type = "TYPE_" + match_wrapper.group(1).upper()
+            wrapped_type = f"TYPE_{match_wrapper.group(1).upper()}"
             if hasattr(betterproto, wrapped_type):
                 return f"betterproto.{wrapped_type}"
         return None
 
     @property
     def repeated(self) -> bool:
+        assert isinstance(self.parent, DescriptorProto)
         return (
             self.proto_obj.label == FieldDescriptorProtoLabel.LABEL_REPEATED
             and not is_map(self.proto_obj, self.parent)
@@ -446,7 +452,7 @@ class FieldCompiler(MessageCompiler):
         )
 
     @property
-    def default_value_string(self) -> Union[Text, None, float, int]:
+    def default_value_string(self) -> str:
         """Python representation of the default proto value."""
         if self.repeated:
             return "[]"
@@ -500,7 +506,7 @@ class FieldCompiler(MessageCompiler):
                 source_type=self.proto_obj.type_name,
             )
         else:
-            raise NotImplementedError(f"Unknown type {field.type}")
+            raise NotImplementedError(f"Unknown type {self.proto_obj.type}")
 
     @property
     def annotation(self) -> str:
@@ -521,8 +527,8 @@ class OneOfFieldCompiler(FieldCompiler):
 
 @dataclass
 class MapEntryCompiler(FieldCompiler):
-    py_k_type: Type = PLACEHOLDER
-    py_v_type: Type = PLACEHOLDER
+    py_k_type: str = PLACEHOLDER
+    py_v_type: str = PLACEHOLDER
     proto_k_type: str = PLACEHOLDER
     proto_v_type: str = PLACEHOLDER
 
@@ -569,10 +575,9 @@ class MapEntryCompiler(FieldCompiler):
 
 
 @dataclass
-class EnumDefinitionCompiler(MessageCompiler):
+class EnumDefinitionCompiler(MessageCompiler[OutputTemplate, EnumDescriptorProto]):
     """Representation of a proto Enum definition."""
 
-    proto_obj: EnumDescriptorProto = PLACEHOLDER
     entries: List["EnumDefinitionCompiler.EnumEntry"] = PLACEHOLDER
 
     @dataclass(unsafe_hash=True)
@@ -607,9 +612,9 @@ class EnumDefinitionCompiler(MessageCompiler):
 
 
 @dataclass
-class ServiceCompiler(ProtoContentBase):
+class ServiceCompiler(ProtoContentBase[OutputTemplate]):
     parent: OutputTemplate = PLACEHOLDER
-    proto_obj: DescriptorProto = PLACEHOLDER
+    proto_obj: ServiceDescriptorProto = PLACEHOLDER
     path: List[int] = PLACEHOLDER
     methods: List["ServiceMethodCompiler"] = field(default_factory=list)
 
@@ -629,12 +634,10 @@ class ServiceCompiler(ProtoContentBase):
 
 
 @dataclass
-class ServiceMethodCompiler(ProtoContentBase):
+class ServiceMethodCompiler(ProtoContentBase[ServiceCompiler]):
 
-    parent: ServiceCompiler
-    proto_obj: MethodDescriptorProto
-    path: List[int] = PLACEHOLDER
-    comment_indent: int = 8
+    proto_obj: MethodDescriptorProto = PLACEHOLDER
+    comment_indent = 8
 
     def __post_init__(self) -> None:
         # Add method to service

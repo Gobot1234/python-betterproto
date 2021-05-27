@@ -1,35 +1,33 @@
 import dataclasses
 import enum
-import inspect
 import json
 import math
 import struct
 import sys
 import typing
-from abc import ABC
 from base64 import b64decode, b64encode
 from datetime import datetime, timedelta, timezone
-from dateutil.parser import isoparse
 from typing import (
     Any,
     Callable,
     Dict,
     Generator,
-    Iterable,
     List,
     Optional,
     Set,
     Tuple,
     Type,
     Union,
+    cast,
     get_type_hints,
 )
 
+from dateutil.parser import isoparse
+
+import betterproto
 from ._types import T
 from ._version import __version__
 from .casing import camel_case, safe_snake_case, snake_case
-from .grpc.grpclib_client import ServiceStub
-
 
 # Proto 3 data types
 TYPE_ENUM = "enum"
@@ -485,16 +483,16 @@ class ProtoClassMetadata:
     )
 
     oneof_group_by_field: Dict[str, str]
-    oneof_field_by_group: Dict[str, Set[dataclasses.Field]]
+    oneof_field_by_group: Dict[str, Set[dataclasses.Field[Any]]]
     field_name_by_number: Dict[int, str]
     meta_by_field_name: Dict[str, FieldMetadata]
     sorted_field_names: Tuple[str, ...]
     default_gen: Dict[str, Callable[[], Any]]
-    cls_by_field: Dict[str, Type]
+    cls_by_field: Dict[str, Type[Any]]
 
     def __init__(self, cls: Type["Message"]):
         by_field = {}
-        by_group: Dict[str, Set] = {}
+        by_group: Dict[str, Set[dataclasses.Field[Any]]] = {}
         by_field_name = {}
         by_field_number = {}
 
@@ -523,13 +521,13 @@ class ProtoClassMetadata:
 
     @staticmethod
     def _get_default_gen(
-        cls: Type["Message"], fields: Iterable[dataclasses.Field]
+        cls: Type["Message"], fields: Tuple[dataclasses.Field[Any], ...]
     ) -> Dict[str, Callable[[], Any]]:
         return {field.name: cls._get_field_default_gen(field) for field in fields}
 
     @staticmethod
     def _get_cls_by_field(
-        cls: Type["Message"], fields: Iterable[dataclasses.Field]
+        cls: Type["Message"], fields: Tuple[dataclasses.Field[Any], ...]
     ) -> Dict[str, Type]:
         field_cls = {}
 
@@ -554,7 +552,7 @@ class ProtoClassMetadata:
         return field_cls
 
 
-class Message(ABC):
+class Message:
     """
     The base class for protobuf messages, all generated messages will inherit from
     this. This class registers the message fields which are used by the serializers and
@@ -574,6 +572,7 @@ class Message(ABC):
     _serialized_on_wire: bool
     _unknown_fields: bytes
     _group_current: Dict[str, str]
+    _betterproto_meta: ProtoClassMetadata  # should be a class var
 
     def __post_init__(self) -> None:
         # Keep track of whether every field was default
@@ -603,7 +602,7 @@ class Message(ABC):
         return super().__getattribute__(name)
 
     def __eq__(self, other) -> bool:
-        if type(self) is not type(other):
+        if isinstance(other, self.__class__):
             return False
 
         for field_name in self._betterproto.meta_by_field_name:
@@ -657,7 +656,7 @@ class Message(ABC):
     def __setattr__(self, attr: str, value: Any) -> None:
         if attr != "_serialized_on_wire":
             # Track when a field has been set.
-            self.__dict__["_serialized_on_wire"] = True
+            super().__setattr__("_serialized_on_wire", True)
 
         if hasattr(self, "_group_current"):  # __post_init__ had already run
             if attr in self._betterproto.oneof_group_by_field:
@@ -685,16 +684,15 @@ class Message(ABC):
         It may be initialized multiple times in a multi-threaded environment,
         but that won't affect the correctness.
         """
-        meta = getattr(self.__class__, "_betterproto_meta", None)
-        if not meta:
+        try:
+            return self.__class__._betterproto_meta
+        except AttributeError:
             meta = ProtoClassMetadata(self.__class__)
-            self.__class__._betterproto_meta = meta  # type: ignore
-        return meta
+            self.__class__._betterproto_meta = meta
+            return meta
 
     def __bytes__(self) -> bytes:
-        """
-        Get the binary encoded Protobuf representation of this message instance.
-        """
+        """Get the binary encoded Protobuf representation of this message instance."""
         output = bytearray()
         for field_name, meta in self._betterproto.meta_by_field_name.items():
             value = getattr(self, field_name)
@@ -797,21 +795,24 @@ class Message(ABC):
         return bytes(self)
 
     @classmethod
-    def _type_hint(cls, field_name: str) -> Type:
+    def _type_hint(cls, field_name: str) -> Type[Any]:
         return cls._type_hints()[field_name]
 
     @classmethod
-    def _type_hints(cls) -> Dict[str, Type]:
+    def _type_hints(cls) -> Dict[str, Type[Any]]:
         module = sys.modules[cls.__module__]
-        return get_type_hints(cls, vars(module))
+        return get_type_hints(cls, module.__dict__)
 
     @classmethod
-    def _cls_for(cls, field: dataclasses.Field, index: int = 0) -> Type:
+    def _cls_for(cls, field: dataclasses.Field[Any], index: int = 0) -> Type[Any]:
         """Get the message class for a field from the type hints."""
         field_cls = cls._type_hint(field.name)
-        if hasattr(field_cls, "__args__") and index >= 0:
-            if field_cls.__args__ is not None:
-                field_cls = field_cls.__args__[index]
+        if (
+            hasattr(field_cls, "__args__")
+            and index >= 0
+            and field_cls.__args__ is not None
+        ):
+            field_cls = field_cls.__args__[index]
         return field_cls
 
     def _get_field_default(self, field_name: str) -> Any:
@@ -979,7 +980,9 @@ class Message(ABC):
         return cls().parse(data)
 
     def to_dict(
-        self, casing: Casing = Casing.CAMEL, include_default_values: bool = False
+        self,
+        casing: Callable[[str], str] = cast(Callable[[str], str], Casing.CAMEL),
+        include_default_values: bool = False,
     ) -> Dict[str, Any]:
         """
         Returns a JSON serializable dict representation of this object.
@@ -1005,7 +1008,7 @@ class Message(ABC):
         for field_name, meta in self._betterproto.meta_by_field_name.items():
             field_is_repeated = defaults[field_name] is list
             value = getattr(self, field_name)
-            cased_name = casing(field_name).rstrip("_")  # type: ignore
+            cased_name = casing(field_name).rstrip("_")
             if meta.proto_type == TYPE_MESSAGE:
                 if isinstance(value, datetime):
                     if (
@@ -1086,7 +1089,7 @@ class Message(ABC):
                             # transparently upgrade single value to repeated
                             output[cased_name] = [enum_class(value).name]
                     else:
-                        enum_class = field_types[field_name]  # noqa
+                        enum_class = field_types[field_name]
                         output[cased_name] = enum_class(value).name
                 elif meta.proto_type in (TYPE_FLOAT, TYPE_DOUBLE):
                     if field_is_repeated:
@@ -1303,7 +1306,7 @@ class _Timestamp(Timestamp):
         return f"{result}.{nanos:09d}"
 
 
-def _get_wrapper(proto_type: str) -> Type:
+def _get_wrapper(proto_type: str) -> Type[betterproto.Message]:
     """Get the wrapper message class for a wrapped type."""
 
     # TODO: include ListValue and NullValue?

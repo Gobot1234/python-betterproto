@@ -1,5 +1,12 @@
 import asyncio
-from typing import AsyncIterable, AsyncIterator, Iterable, Optional, TypeVar, Union
+from typing import (
+    AsyncIterable,
+    Iterable,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+)
 
 T = TypeVar("T")
 
@@ -75,9 +82,6 @@ class AsyncChannel(AsyncIterable[T]):
         self._waiting_receivers: int = 0
         # Track whether flush has been invoked so it can only happen once
         self._flushed = False
-
-    def __aiter__(self) -> AsyncIterator[T]:
-        return self
 
     async def __anext__(self) -> T:
         if self.done():
@@ -163,14 +167,14 @@ class AsyncChannel(AsyncIterable[T]):
             self._waiting_receivers -= 1
             self._queue.task_done()
 
-    def close(self):
+    def close(self) -> None:
         """
         Close this channel to new items
         """
         self._closed = True
         asyncio.ensure_future(self._flush_queue())
 
-    async def _flush_queue(self):
+    async def _flush_queue(self) -> None:
         """
         To be called after the channel is closed. Pushes a number of self.__flush
         objects to the queue to ensure no waiting consumers get deadlocked.
@@ -182,4 +186,4 @@ class AsyncChannel(AsyncIterable[T]):
                 await self._queue.put(self.__flush)
 
     # A special signal object for flushing the queue when the channel is closed
-    __flush = object()
+    __flush = cast(T, object())

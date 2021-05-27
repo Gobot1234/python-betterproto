@@ -8,21 +8,22 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 
+from typing import Any, cast
 import pathlib
 
-import toml
-
+import tomlkit
 
 # -- Project information -----------------------------------------------------
 
 project = "betterproto"
 copyright = "2019 Daniel G. Taylor"
 author = "danielgtaylor"
-pyproject = toml.load(open(pathlib.Path(__file__).parent.parent / "pyproject.toml"))
+ROOT = pathlib.Path(__file__, "..", "..")
+PYPROJECT = cast(Any, tomlkit.parse((ROOT / "pyproject.toml").read_text()))
 
 
 # The full version, including alpha/beta/rc tags.
-release = pyproject["tool"]["poetry"]["version"]
+release: str = PYPROJECT["tool"]["poetry"]["version"]
 
 
 # -- General configuration ---------------------------------------------------

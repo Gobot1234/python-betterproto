@@ -1,5 +1,6 @@
 import keyword
 import re
+from typing import List
 
 # Word delimiters and symbols that will not be preserved when re-casing.
 # language=PythonRegExp
@@ -79,7 +80,7 @@ def pascal_case(value: str, strict: bool = True) -> str:
         The value in PascalCase.
     """
 
-    def substitute_word(symbols, word):
+    def substitute_word(symbols: str, word: str) -> str:
         if strict:
             return word.capitalize()  # Remove all delimiters
 

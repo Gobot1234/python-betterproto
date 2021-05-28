@@ -25,7 +25,8 @@ else:
     command.build_lib = str(BETTERPROTO.parent)
     try:
         command.extensions = build.mypycify(
-            [str(p) for p in sorted(BETTERPROTO.glob("*.py"))],
+            [str(p) for p in sorted(BETTERPROTO.glob("*.py"))
+             if p.name not in ("__init__.py", "enums.py", "_version.py", "field.py")],
         )
         command.run()
     except Exception:

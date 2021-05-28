@@ -12,7 +12,6 @@ dist
 **/*.egg-info
 output
 .idea
-.DS_Store
 .tox
 .venv
 .asv

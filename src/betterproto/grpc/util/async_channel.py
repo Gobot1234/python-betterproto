@@ -1,12 +1,5 @@
 import asyncio
-from typing import (
-    AsyncIterable,
-    Iterable,
-    Optional,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import AsyncIterable, Iterable, Optional, TypeVar, Union, cast
 
 T = TypeVar("T")
 

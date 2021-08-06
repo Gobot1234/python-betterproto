@@ -95,7 +95,7 @@ def list_replace_nans(items: List) -> List[Any]:
         elif isinstance(item, dict):
             result.append(dict_replace_nans(item))
         elif isinstance(item, float) and math.isnan(item):
-            result.append(betterproto.NAN)
+            result.append(betterproto.NAN_STRING)
     return result
 
 
@@ -119,7 +119,7 @@ def dict_replace_nans(input_dict: Dict[Any, Any]) -> Dict[Any, Any]:
         elif isinstance(value, list):
             value = list_replace_nans(value)
         elif isinstance(value, float) and math.isnan(value):
-            value = betterproto.NAN
+            value = betterproto.NAN_STRING
         result[key] = value
     return result
 

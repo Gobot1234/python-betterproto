@@ -131,10 +131,10 @@ def lowercase_first(value: str) -> str:
     :class:`str`
         The lower cased string.
     """
-    return value[0:1].lower() + value[1:]
+    return value[:1].lower() + value[1:]
 
 
-def is_reserved_name(value: str) -> bool:
+def is_reserved_name(value: str) -> bool:  # TODO check if it's in dir(Message)
     if keyword.iskeyword(value):
         return True
 

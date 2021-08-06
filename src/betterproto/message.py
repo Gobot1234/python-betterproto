@@ -14,6 +14,7 @@ from typing import (
     List,
     Optional,
     Set,
+    SupportsFloat,
     Tuple,
     Type,
     Union,
@@ -22,30 +23,26 @@ from typing import (
 )
 
 from dateutil.parser import isoparse
-from typing_extensions import ClassVar
 from mypy_extensions import mypyc_attr
+from typing_extensions import ClassVar
 
 from betterproto._types import T
-from betterproto.casing import safe_snake_case, camel_case
+from betterproto.casing import camel_case, safe_snake_case
 from betterproto.consts import *
 from betterproto.enums import *
 from betterproto.field import FieldMetadata, dataclass_field
 
-__all__ = (
-    "Message",
-)
+__all__ = ("Message", "which_one_of", "serialized_on_wire")
 
 
-def _pack_fmt(proto_type: str) -> str:
-    """Returns a little-endian format string for reading/writing binary."""
-    return {
-        TYPE_DOUBLE: "<d",
-        TYPE_FLOAT: "<f",
-        TYPE_FIXED32: "<I",
-        TYPE_FIXED64: "<Q",
-        TYPE_SFIXED32: "<i",
-        TYPE_SFIXED64: "<q",
-    }[proto_type]
+_packer = {
+    TYPE_DOUBLE: struct.Struct("<d"),
+    TYPE_FLOAT: struct.Struct("<f"),
+    TYPE_FIXED32: struct.Struct("<I"),
+    TYPE_FIXED64: struct.Struct("<Q"),
+    TYPE_SFIXED32: struct.Struct("<i"),
+    TYPE_SFIXED64: struct.Struct("<q"),
+}.__getitem__  # Returns a little-endian stuct for reading/writing binary.
 
 
 def encode_varint(value: int) -> bytes:
@@ -79,19 +76,21 @@ def _preprocess_single(proto_type: str, wraps: str, value: Any) -> bytes:
         # Handle zig-zag encoding.
         return encode_varint(value << 1 if value >= 0 else (value << 1) ^ (~0))
     elif proto_type in FIXED_TYPES:
-        return struct.pack(_pack_fmt(proto_type), value)
+        return _packer(proto_type).pack(value)
     elif proto_type == TYPE_STRING:
         return value.encode("utf-8")
     elif proto_type == TYPE_MESSAGE:
         if isinstance(value, datetime):
             # Convert the `datetime` to a timestamp message.
             from .lib.google.protobuf import Timestamp
+
             seconds = int(value.timestamp())
             nanos = int(value.microsecond * 1e3)
             value = Timestamp(seconds=seconds, nanos=nanos)
         elif isinstance(value, timedelta):
             # Convert the `timedelta` to a duration message.
             from .lib.google.protobuf import Duration
+
             total_ms = value // timedelta(microseconds=1)
             seconds = int(total_ms / 1e6)
             nanos = int((total_ms % 1e6) * 1e3)
@@ -137,12 +136,12 @@ def _serialize_single(
     return bytes(output)
 
 
-def _parse_float(value: Any) -> float:
+def _parse_float(value: Union[str, SupportsFloat]) -> float:
     """Parse the given value to a float
 
     Parameters
     ----------
-    value : Any
+    value
         Value to parse
 
     Returns
@@ -150,12 +149,12 @@ def _parse_float(value: Any) -> float:
     float
         Parsed value
     """
-    if value == INFINITY:
-        return float("inf")
-    if value == NEG_INFINITY:
-        return -float("inf")
-    if value == NAN:
-        return float("nan")
+    if value == INFINITY_STRING:
+        return INFINITY
+    if value == NEG_INFINITY_STRING:
+        return NEG_INFINITY
+    if value == NAN_STRING:
+        return NAN
     return float(value)
 
 
@@ -173,12 +172,12 @@ def _dump_float(value: float) -> Union[float, str]:
         Dumped valid, either a float or the strings
         "Infinity" or "-Infinity"
     """
-    if value == float("inf"):
-        return INFINITY
-    if value == -float("inf"):
-        return NEG_INFINITY
-    if value == float("nan"):
-        return NAN
+    if value == INFINITY:
+        return INFINITY_STRING
+    if value == NEG_INFINITY:
+        return NEG_INFINITY_STRING
+    if value == NAN:
+        return NAN_STRING
     return value
 
 
@@ -189,7 +188,7 @@ def decode_varint(buffer: bytes, pos: int) -> Tuple[int, int]:
     """
     result = 0
     shift = 0
-    while 1:
+    while True:
         b = buffer[pos]
         result |= (b & 0x7F) << shift
         pos += 1
@@ -343,7 +342,9 @@ class Message:
     _serialized_on_wire: bool
     _unknown_fields: bytes
     _group_current: Dict[str, str]
-    _betterproto_meta: ClassVar[ProtoClassMetadata]  # should be a class var
+    _betterproto_meta: ClassVar[ProtoClassMetadata]
+
+    __slots__ = ("_serialized_on_wire", "_unknown_fields", "_group_current")
 
     def __post_init__(self) -> None:
         # Keep track of whether every field was default
@@ -365,9 +366,9 @@ class Message:
                     group_current[meta.group] = field_name
 
         # Now that all the defaults are set, reset it!
-        object.__setattr__(self, "_serialized_on_wire", not all_sentinel)
-        object.__setattr__(self,"_unknown_fields", b"")
-        object.__setattr__(self,"_group_current", group_current)
+        super().__setattr__("_serialized_on_wire", not all_sentinel)
+        super().__setattr__("_unknown_fields", b"")
+        super().__setattr__("_group_current", group_current)
 
     def __raw_get(self, name: str) -> Any:
         return super().__getattribute__(name)
@@ -386,19 +387,16 @@ class Message:
             elif other_val is PLACEHOLDER:
                 other_val = other._get_field_default(field_name)
 
-            if self_val != other_val:
-                # We consider two nan values to be the same for the
-                # purposes of comparing messages (otherwise a message
-                # is not equal to itself)
-                if (
-                    isinstance(self_val, float)
-                    and isinstance(other_val, float)
-                    and math.isnan(self_val)
-                    and math.isnan(other_val)
-                ):
-                    continue
-                else:
-                    return False
+            # We consider two nan values to be the same for the
+            # purposes of comparing messages (otherwise a message
+            # is not equal to itself)
+            if self_val != other_val and (
+                not isinstance(self_val, float)
+                or not isinstance(other_val, float)
+                or not math.isnan(self_val)
+                or not math.isnan(other_val)
+            ):
+                return False
 
         return True
 
@@ -429,14 +427,16 @@ class Message:
             # Track when a field has been set.
             super().__setattr__("_serialized_on_wire", True)
 
-        if hasattr(self, "_group_current"):  # __post_init__ had already run
-            if attr in self._betterproto.oneof_group_by_field:
-                group = self._betterproto.oneof_group_by_field[attr]
-                for field in self._betterproto.oneof_field_by_group[group]:
-                    if field.name == attr:
-                        self._group_current[group] = field.name
-                    else:
-                        super().__setattr__(field.name, PLACEHOLDER)
+        if (
+            hasattr(self, "_group_current")
+            and attr in self._betterproto.oneof_group_by_field
+        ):
+            group = self._betterproto.oneof_group_by_field[attr]
+            for field in self._betterproto.oneof_field_by_group[group]:
+                if field.name == attr:
+                    self._group_current[group] = field.name
+                else:
+                    super().__setattr__(field.name, PLACEHOLDER)
 
         super().__setattr__(attr, value)
 
@@ -571,7 +571,7 @@ class Message:
 
     @classmethod
     def _type_hints(cls) -> Dict[str, Type[Any]]:
-        module = sys.modules[cls.__module__]
+        module = sys.modules[cls.__module__]  # type: ignore
         return get_type_hints(cls, module.__dict__)
 
     @classmethod
@@ -622,6 +622,7 @@ class Message:
     ) -> Any:
         """Adjusts values after parsing."""
         if wire_type == WIRE_VARINT:
+            value = cast(int, value)
             if meta.proto_type in (TYPE_INT32, TYPE_INT64):
                 bits = int(meta.proto_type[3:])
                 value = value & ((1 << bits) - 1)
@@ -634,8 +635,7 @@ class Message:
                 # Booleans use a varint encoding, so convert it to true/false.
                 value = value > 0
         elif wire_type in (WIRE_FIXED_32, WIRE_FIXED_64):
-            fmt = _pack_fmt(meta.proto_type)
-            value = struct.unpack(fmt, value)[0]
+            (value,) = _packer(meta.proto_type).unpack(value)
         elif wire_type == WIRE_LEN_DELIM:
             if meta.proto_type == TYPE_STRING:
                 value = value.decode("utf-8")
@@ -644,11 +644,13 @@ class Message:
 
                 if cls == datetime:
                     from .lib.google.protobuf import Timestamp
+
                     timestamp = Timestamp().parse(value)
                     ts = timestamp.seconds + (timestamp.nanos / 1e9)
                     value = datetime.fromtimestamp(ts, tz=timezone.utc)
                 elif cls == timedelta:
                     from .lib.google.protobuf import Duration
+
                     duration = Duration().parse(value)
                     value = timedelta(
                         seconds=duration.seconds, microseconds=duration.nanos / 1e3
@@ -859,9 +861,7 @@ class Message:
                 elif meta.proto_type == TYPE_ENUM:
                     if field_is_repeated:
                         enum_class = field_types[field_name].__args__[0]
-                        if isinstance(value, Iterable) and not isinstance(
-                            value, str
-                        ):
+                        if isinstance(value, Iterable) and not isinstance(value, str):
                             output[cased_name] = [enum_class(el).name for el in value]
                         else:
                             # transparently upgrade single value to repeated
@@ -1036,7 +1036,6 @@ def delta_to_json(delta: timedelta) -> str:
         while len(parts[1]) not in (3, 6, 9):
             parts[1] = f"{parts[1]}0"
     return f"{'.'.join(parts)}s"
-
 
 
 def timestamp_to_json(dt: datetime) -> str:

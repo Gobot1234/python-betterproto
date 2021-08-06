@@ -1,8 +1,7 @@
-from ._version import __version__
+from ._version import *
 from .consts import *
 from .enums import *
 from .field import *
-from .message import *  # noqa
 from .lib.google.protobuf import (
     BoolValue,
     BytesValue,
@@ -17,3 +16,4 @@ from .lib.google.protobuf import (
     UInt32Value,
     UInt64Value,
 )
+from .message import *

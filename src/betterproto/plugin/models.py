@@ -33,7 +33,6 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 from typing import (
-    TYPE_CHECKING,
     Any,
     Dict,
     Generic,
@@ -172,9 +171,6 @@ def get_comment(
 class ProtoContentBase(Generic[Parent]):
     """Methods common to MessageCompiler, ServiceCompiler and ServiceMethodCompiler."""
 
-    if TYPE_CHECKING:
-        __dataclass_fields__: Dict[str, object]
-
     comment_indent = 4
     parent: Parent = PLACEHOLDER
     source_file: FileDescriptorProto = PLACEHOLDER
@@ -190,7 +186,7 @@ class ProtoContentBase(Generic[Parent]):
     def output_file(self) -> "OutputTemplate":
         current = self
         while not isinstance(current, OutputTemplate):
-            current = cast(Any, current.parent)
+            current = current.parent
         return current
 
     @property
@@ -289,10 +285,11 @@ class MessageCompiler(ProtoContentBase[MParent], Generic[MParent, ProtoObj]):
     def __post_init__(self) -> None:
         # Add message to output file
         if isinstance(self.parent, OutputTemplate):
+            output_file = self.output_file
             if isinstance(self, EnumDefinitionCompiler):
-                self.output_file.enums.append(self)
+                output_file.enums.append(self)
             else:
-                self.output_file.messages.append(self)
+                output_file.messages.append(self)
         self.deprecated = self.proto_obj.options.deprecated
         super().__post_init__()
 

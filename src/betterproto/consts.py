@@ -87,8 +87,11 @@ DATETIME_ZERO = datetime_default_gen()
 
 
 # Special protobuf json doubles
-INFINITY = "Infinity"
-NEG_INFINITY = "-Infinity"
-NAN = "NaN"
+INFINITY_STRING = "Infinity"
+INFINITY = float("inf")
+NEG_INFINITY_STRING = "-Infinity"
+NEG_INFINITY = -INFINITY
+NAN_STRING = "NaN"
+NAN = float("nan")
 
 PLACEHOLDER: _Any = object()

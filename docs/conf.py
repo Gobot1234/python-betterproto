@@ -4,10 +4,8 @@
 # list see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-import sys
 
 import betterproto
-
 
 
 # -- Project information -----------------------------------------------------
